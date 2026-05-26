@@ -83,6 +83,7 @@ class MathVQADataset(Dataset[MathVQASample]):
         self.root = self.manifest_path.parent
         self.split = split
         self.max_samples = max_samples
+
         rows = load_jsonl(self.manifest_path)
         rows = [row for row in rows if row.get("split") == split]
         if max_samples is not None:

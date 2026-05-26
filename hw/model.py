@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
-
 import torch
 from torch import nn
 
@@ -28,14 +26,21 @@ class VisionToTextAdapter(nn.Module):
         self.vision_hidden_size = vision_hidden_size
         self.text_hidden_size = text_hidden_size
         self.num_image_tokens = num_image_tokens
-
-        # TODO: replace with a small projection network.
-        # Recommended: LayerNorm -> Linear -> GELU -> Linear.
-        raise NotImplementedError("Implement VisionToTextAdapter.__init__")
+        self.queries = nn.Parameter(torch.randn(num_image_tokens, vision_hidden_size) * 0.02)
+        self.projection = nn.Sequential(
+            nn.LayerNorm(vision_hidden_size),
+            nn.Linear(vision_hidden_size, text_hidden_size),
+            nn.GELU(),
+            nn.Linear(text_hidden_size, text_hidden_size),
+        )
 
     def forward(self, vision_hidden_states: torch.Tensor) -> torch.Tensor:
         """Return visual embeddings [B, num_image_tokens, text_hidden_size]."""
-        raise NotImplementedError("Implement VisionToTextAdapter.forward")
+        attention = torch.softmax(
+            self.queries @ vision_hidden_states.transpose(1, 2), dim=-1
+        )
+        pooled = attention @ vision_hidden_states
+        return self.projection(pooled)
 
 
 def merge_visual_embeddings(
@@ -58,7 +63,12 @@ def merge_visual_embeddings(
     Assumption for public tests:
         each row has exactly K positions where input_ids == image_token_id.
     """
-    raise NotImplementedError("Implement visual/text embedding merge")
+    merged = input_embeds.clone()
+    mask = input_ids == image_token_id
+    for row in range(input_embeds.shape[0]):
+        positions = mask[row].nonzero(as_tuple=True)[0]
+        merged[row, positions] = visual_embeds[row, : positions.shape[0]].to(merged.dtype)
+    return merged
 
 
 class MathVLM(nn.Module):
@@ -85,19 +95,47 @@ class MathVLM(nn.Module):
         for p in self.language_model.parameters():
             p.requires_grad = False
 
-    def forward(self, batch: dict[str, torch.Tensor]) -> Any:
-        """Forward pass with loss.
+    def encode_images(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """Run vision encoder over pixel tiles and map to visual embeddings.
 
-        TODO:
-            - encode images;
-            - map to visual embeddings;
-            - get text input embeddings;
-            - merge visual/text embeddings;
-            - call language_model with inputs_embeds, attention_mask, labels.
+        pixel_values: [B, T, 3, H, W]. Tiles are flattened into the batch,
+        encoded, then projected by the adapter to [B, num_image_tokens, D].
         """
-        raise NotImplementedError("Implement MathVLM.forward")
+        batch, tiles = pixel_values.shape[0], pixel_values.shape[1]
+        flat = pixel_values.view(batch * tiles, *pixel_values.shape[2:])
+        vision_hidden = self.vision_encoder(flat)
+        if isinstance(vision_hidden, dict):
+            vision_hidden = vision_hidden["last_hidden_state"]
+        if vision_hidden.dim() == 2:
+            vision_hidden = vision_hidden.unsqueeze(1)
+        visual_embeds = self.adapter(vision_hidden)
+        visual_embeds = visual_embeds.view(batch, tiles, *visual_embeds.shape[1:])
+        return visual_embeds.reshape(batch, -1, visual_embeds.shape[-1])
+
+    def build_inputs_embeds(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Merge text embeddings with visual embeddings at <image> positions."""
+        input_ids = batch["input_ids"]
+        text_embeds = self.language_model.get_input_embeddings()(input_ids)
+        visual_embeds = self.encode_images(batch["pixel_values"])
+        return merge_visual_embeddings(
+            text_embeds, input_ids, visual_embeds, self.config.image_token_id
+        )
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> Any:
+        """Forward pass with loss."""
+        inputs_embeds = self.build_inputs_embeds(batch)
+        return self.language_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=batch.get("attention_mask"),
+            labels=batch.get("labels"),
+        )
 
     @torch.no_grad()
     def generate(self, batch: dict[str, torch.Tensor], **generation_kwargs: Any) -> torch.Tensor:
         """Generate answer token ids."""
-        raise NotImplementedError("Implement MathVLM.generate")
+        inputs_embeds = self.build_inputs_embeds(batch)
+        return self.language_model.generate(
+            inputs_embeds=inputs_embeds,
+            attention_mask=batch.get("attention_mask"),
+            **generation_kwargs,
+        )
