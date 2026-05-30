@@ -50,10 +50,18 @@ def compute_accuracy(rows: list[dict[str, Any]]) -> dict[str, float]:
 
 def run_benchmark(config: dict[str, Any], toy: bool = False) -> dict[str, float]:
     from hw.dataset import MathVQADataset
+
+    data_cfg = config.get("data", {})
+    inference_cfg = config.get("inference", {})
     eval_cfg = config.get("eval", {})
-    manifest_path = eval_cfg.get("manifest_path", "assets/toy_math_vqa/manifest.jsonl")
-    split = eval_cfg.get("split", "dev")
-    max_samples = eval_cfg.get("max_samples")
+
+    manifest_path = (
+        eval_cfg.get("manifest_path")
+        or data_cfg.get("eval_manifest")
+        or "assets/toy_math_vqa/manifest.jsonl"
+    )
+    split = eval_cfg.get("split") or data_cfg.get("split") or "dev"
+    max_samples = eval_cfg.get("max_samples", data_cfg.get("max_samples"))
     if toy:
         max_samples = max_samples or 5
     dataset = MathVQADataset(manifest_path, split=split, max_samples=max_samples)
@@ -68,7 +76,7 @@ def run_benchmark(config: dict[str, Any], toy: bool = False) -> dict[str, float]
             "answer": sample.answer,
             "subject": sample.subject,
         })
-    output_path = eval_cfg.get("output_path")
+    output_path = eval_cfg.get("output_path") or inference_cfg.get("output_path")
     if output_path:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)

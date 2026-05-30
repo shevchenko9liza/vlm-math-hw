@@ -59,20 +59,6 @@ def sanitize_question(text: str) -> str:
 
 
 class MathVQADataset(Dataset[MathVQASample]):
-    """Dataset for manifest-based visual mathematical QA.
-
-    Expected manifest fields:
-        id, split, image, question, options, answer, subject, source(optional)
-
-    TODO for students:
-        - read manifest;
-        - filter by split;
-        - support max_samples;
-        - resolve image paths relative to manifest directory;
-        - open images as RGB PIL.Image;
-        - return MathVQASample.
-    """
-
     def __init__(
         self,
         manifest_path: str | Path,

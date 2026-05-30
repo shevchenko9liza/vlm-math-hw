@@ -39,6 +39,7 @@ wandb/
 # External datasets
 assets/mathvista*/
 assets/mathvista_testmini/
+assets/generated_math_vqa*/
 
 # Local editor files
 .vscode/
